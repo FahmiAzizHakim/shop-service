@@ -2,8 +2,12 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Http\Requests\Commerce\ProductReviewRequest;
+use App\Http\Resources\ProductReviewResource;
+use App\Models\ProductReview;
 use App\Models\TransactionAttachment;
 use App\Services\Checkout\CheckoutService;
+use App\Services\Commerce\ProductReviewService;
 use App\Services\Helper\UploadService;
 use App\Services\Commerce\BankService;
 use App\Services\Commerce\TransactionService;
@@ -23,15 +27,18 @@ class OrderController extends ApiController
     protected $transactions;
     protected $checkout;
     protected $banks;
+    protected $reviews;
 
     public function __construct(
         TransactionService $transactions,
         CheckoutService $checkout,
-        BankService $banks
+        BankService $banks,
+        ProductReviewService $reviews
     ) {
         $this->transactions = $transactions;
         $this->checkout     = $checkout;
         $this->banks        = $banks;
+        $this->reviews      = $reviews;
     }
 
     /**
@@ -187,6 +194,77 @@ class OrderController extends ApiController
             // Where the order stands now, so the receipt can show it without
             // re-reading the whole thing.
             'transaction_status' => $result['transaction_status'],
+        ], 201);
+    }
+
+    /**
+     * What this receipt has already reviewed.
+     *
+     * The receipt page draws a Review button per product line, and this is
+     * what tells it which lines already have one -- the buyer sees what they
+     * wrote rather than a button that would be refused.
+     *
+     * Reviews hidden by a moderator are included, because they are still
+     * reviews this order has left: showing the button again would invite a
+     * submission the unique index refuses anyway.
+     */
+    public function reviews($website, $token)
+    {
+        $trx = $this->transactions->getByToken($token, (int) $website);
+
+        if (!$trx) {
+            return $this->notFound('Order');
+        }
+
+        return response()->json([
+            'data' => [
+                // Whether the order has got far enough to be reviewed at all,
+                // so the page can explain a missing button rather than just
+                // omitting it.
+                'reviewable' => in_array($trx->status, ProductReview::REVIEWABLE_STATUSES, true),
+                'reviews'    => ProductReviewResource::collection(
+                    $this->reviews->forTransaction($trx)
+                )->resolve(),
+            ],
+        ]);
+    }
+
+    /**
+     * A buyer's review of one product on their order.
+     *
+     * The one public write that creates content on the storefront, and the
+     * reason it hangs off the receipt: the token is unguessable and already
+     * proves whoever holds it placed this order, so there is no id in the body
+     * for a caller to point at somebody else's purchase. Everything else --
+     * whether the order is far enough along, whether the product was on it,
+     * whether it has been reviewed already -- is settled by
+     * ProductReviewService against the transaction this token resolved to.
+     *
+     * Multipart, because the photos ride along; the gateway forwards the parts
+     * as they arrived and rate limits the route as it does the other public
+     * writes.
+     */
+    public function storeReview(ProductReviewRequest $request, $website, $token)
+    {
+        $trx = $this->transactions->getByToken($token, (int) $website);
+
+        if (!$trx) {
+            return $this->notFound('Order');
+        }
+
+        $result = $this->reviews->submit(
+            $trx,
+            $request->validated(),
+            $request->file('images', [])
+        );
+
+        if (($result['status'] ?? 'failed') !== 'success') {
+            return response()->json(['message' => $result['message']], 422);
+        }
+
+        return response()->json([
+            'message' => $result['message'],
+            'data'    => new ProductReviewResource($result['data']),
         ], 201);
     }
 }

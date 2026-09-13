@@ -3,6 +3,7 @@
 namespace App\Services\Catalog;
 
 use App\Repositories\Commerce\PackageRepository;
+use App\Repositories\Commerce\ProductHighlightRepository;
 use App\Repositories\Commerce\ProductRepository;
 use App\Repositories\Commerce\ServiceRepository;
 
@@ -22,15 +23,18 @@ class CatalogDataService
     protected $services;
     protected $products;
     protected $packages;
+    protected $highlights;
 
     public function __construct(
         ServiceRepository $services,
         ProductRepository $products,
-        PackageRepository $packages
+        PackageRepository $packages,
+        ProductHighlightRepository $highlights
     ) {
-        $this->services = $services;
-        $this->products = $products;
-        $this->packages = $packages;
+        $this->services   = $services;
+        $this->products   = $products;
+        $this->packages   = $packages;
+        $this->highlights = $highlights;
     }
 
     /**
@@ -77,5 +81,22 @@ class CatalogDataService
     public function packages($websiteId, $serviceId = null)
     {
         return $this->packages->activeForWebsite($websiteId, $serviceId);
+    }
+
+    /**
+     * The running highlights, each with the products under it.
+     *
+     * Highlights with nothing visible in them are dropped rather than
+     * returned empty. The repository already constrains the products to the
+     * ones the catalogue shows, so a highlight can end up holding none --
+     * every product in it deactivated, or its service switched off -- and a
+     * heading over a blank row is worse than no row at all. Deciding it here
+     * rather than in the frontend keeps "what a visitor sees" one answer.
+     */
+    public function highlights($websiteId)
+    {
+        return $this->highlights->activeForWebsite($websiteId)
+            ->filter(fn ($highlight) => $highlight->products->isNotEmpty())
+            ->values();
     }
 }

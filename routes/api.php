@@ -6,6 +6,8 @@ use App\Http\Controllers\Api\Admin\DeliveryPriceController;
 use App\Http\Controllers\Api\Admin\OtherChargeController;
 use App\Http\Controllers\Api\Admin\PackageController;
 use App\Http\Controllers\Api\Admin\ProductController;
+use App\Http\Controllers\Api\Admin\ProductHighlightController;
+use App\Http\Controllers\Api\Admin\ProductReviewController;
 use App\Http\Controllers\Api\Admin\ProductStatsController;
 use App\Http\Controllers\Api\Admin\ServiceController;
 use App\Http\Controllers\Api\Admin\TransactionController;
@@ -70,7 +72,12 @@ Route::prefix('v1')->group(function () {
         // for one product -- see CatalogController::view(). Rate limited at
         // the gateway, as the other public writes are.
         Route::post('/products/{id}/view', [CatalogController::class, 'view']);
+        // What buyers said, plus the average and the count.
+        Route::get('/products/{id}/reviews', [CatalogController::class, 'reviews']);
         Route::get('/packages', [CatalogController::class, 'packages']);
+        // The curated rows -- "Best Seller", "New Arrivals" -- each with the
+        // products under it. Highlights holding nothing visible are left out.
+        Route::get('/highlights', [CatalogController::class, 'highlights']);
 
         /* ---- Basket ---- */
 
@@ -95,6 +102,16 @@ Route::prefix('v1')->group(function () {
         // Addressed by its unguessable token, which is what keeps it public.
         Route::get('/receipt/{token}', [OrderController::class, 'receipt']);
         Route::post('/receipt/{token}/attachments', [OrderController::class, 'uploadAttachment']);
+
+        /*
+         * Reviews, hung off the receipt because the token is what proves the
+         * purchase. The GET is what the receipt page reads to decide which
+         * product lines still show a Review button; the POST is multipart --
+         * the photos ride along -- and is rate limited at the gateway like the
+         * other public writes.
+         */
+        Route::get('/receipt/{token}/reviews', [OrderController::class, 'reviews']);
+        Route::post('/receipt/{token}/reviews', [OrderController::class, 'storeReview']);
 
         /*
         | The QRIS admin fee, settled once Qrisly's nudge is known.
@@ -175,6 +192,37 @@ Route::prefix('admin')->middleware('jwt')->group(function () {
         Route::get('/{id}', [PackageController::class, 'show']);
         Route::put('/{id}', [PackageController::class, 'update']);
         Route::delete('/{id}', [PackageController::class, 'destroy']);
+    });
+
+    /*
+     * A named set of products the storefront shows together. Written whole,
+     * like a package: the heading and the products in one call. Plain PUT on
+     * update -- nothing here carries a file, since the products bring their
+     * own images.
+     */
+    Route::prefix('product-highlights')->group(function () {
+        Route::get('/', [ProductHighlightController::class, 'index']);
+        // The product picker. Before /{id}: a literal segment must not be
+        // read as an id.
+        Route::get('/options', [ProductHighlightController::class, 'options']);
+        Route::post('/', [ProductHighlightController::class, 'store']);
+        Route::get('/{id}', [ProductHighlightController::class, 'show']);
+        Route::put('/{id}', [ProductHighlightController::class, 'update']);
+        Route::delete('/{id}', [ProductHighlightController::class, 'destroy']);
+    });
+
+    /*
+     * Moderation for what buyers wrote about a product. Read, hide, remove --
+     * no create and no edit, because a shop that could write or reword its own
+     * reviews would not be publishing reviews. ?product_id=N narrows the list
+     * to one product.
+     */
+    Route::prefix('product-reviews')->group(function () {
+        Route::get('/', [ProductReviewController::class, 'index']);
+        Route::get('/{id}', [ProductReviewController::class, 'show']);
+        // The only field an admin may write.
+        Route::put('/{id}/publish', [ProductReviewController::class, 'publish']);
+        Route::delete('/{id}', [ProductReviewController::class, 'destroy']);
     });
 
     Route::prefix('other-charges')->group(function () {

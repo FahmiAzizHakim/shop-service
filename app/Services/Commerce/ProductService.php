@@ -3,10 +3,12 @@
 namespace App\Services\Commerce;
 
 use App\Repositories\Commerce\PackageDetailRepository;
+use App\Repositories\Commerce\ProductHighlightDetailRepository;
 use App\Repositories\Commerce\ProductImageRepository;
 use App\Repositories\Commerce\ProductRepository;
 use App\Repositories\Commerce\ProductSpecificationRepository;
 use App\Repositories\Commerce\ProductVariantRepository;
+use App\Services\Commerce\ProductReviewService;
 use Illuminate\Support\Facades\DB;
 
 class ProductService
@@ -16,19 +18,25 @@ class ProductService
     protected $variants;
     protected $specifications;
     protected $packageDetails;
+    protected $highlightDetails;
+    protected $reviews;
 
     public function __construct(
         ProductRepository $products,
         ProductImageRepository $images,
         ProductVariantRepository $variants,
         ProductSpecificationRepository $specifications,
-        PackageDetailRepository $packageDetails
+        PackageDetailRepository $packageDetails,
+        ProductHighlightDetailRepository $highlightDetails,
+        ProductReviewService $reviews
     ) {
-        $this->products       = $products;
-        $this->images         = $images;
-        $this->variants       = $variants;
-        $this->specifications = $specifications;
-        $this->packageDetails = $packageDetails;
+        $this->products         = $products;
+        $this->images           = $images;
+        $this->variants         = $variants;
+        $this->specifications   = $specifications;
+        $this->packageDetails   = $packageDetails;
+        $this->highlightDetails = $highlightDetails;
+        $this->reviews          = $reviews;
     }
 
     /**
@@ -110,8 +118,18 @@ class ProductService
         $this->products->detachCategories($product);
         // Drop package lines pointing at this product so no package keeps a dangling row.
         $this->packageDetails->deleteForProduct($id);
+        // Same for highlight lines: a highlight is a list of products, and a
+        // deleted product leaves a row naming nothing.
+        $this->highlightDetails->deleteForProduct($id);
+        // The reviews of this product, and the photos buyers attached to them.
+        // The rows go inside the transaction; the files are unlinked after it
+        // commits, so a rollback cannot leave a review pointing at a picture
+        // that is no longer there.
+        $reviewImages = $this->reviews->deleteForProduct($id);
         $this->products->delete($product);
         DB::commit();
+
+        $this->reviews->removeImageFiles($reviewImages);
 
         return array("status" => "success", "message" => "Product deleted successfully");
     }

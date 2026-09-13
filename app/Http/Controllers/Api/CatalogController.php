@@ -3,9 +3,12 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Resources\PackageResource;
+use App\Http\Resources\ProductHighlightResource;
 use App\Http\Resources\ProductResource;
+use App\Http\Resources\ProductReviewResource;
 use App\Http\Resources\ServiceResource;
 use App\Services\Catalog\CatalogDataService;
+use App\Services\Commerce\ProductReviewService;
 use App\Services\Commerce\ProductViewService;
 use Illuminate\Http\Request;
 
@@ -20,11 +23,16 @@ class CatalogController extends ApiController
 {
     protected $data;
     protected $views;
+    protected $reviews;
 
-    public function __construct(CatalogDataService $data, ProductViewService $views)
-    {
-        $this->data  = $data;
-        $this->views = $views;
+    public function __construct(
+        CatalogDataService $data,
+        ProductViewService $views,
+        ProductReviewService $reviews
+    ) {
+        $this->data    = $data;
+        $this->views   = $views;
+        $this->reviews = $reviews;
     }
 
     /**
@@ -46,6 +54,43 @@ class CatalogController extends ApiController
                 'packages'     => PackageResource::collection($this->data->packages($websiteId, $serviceId))->resolve(),
             ],
         ]);
+    }
+
+    /**
+     * What buyers said about one product.
+     *
+     * Published reviews only, newest first, with the average and the count
+     * beside them so a product page can print "4.6 from 23 reviews" without
+     * counting the list it was given -- and can ask for the summary alone by
+     * reading `summary` and ignoring the rest.
+     *
+     * Its own endpoint rather than a key on the product, because a catalogue
+     * listing draws dozens of products and wants none of this; a product page
+     * draws one and wants all of it.
+     */
+    public function reviews($website, $id)
+    {
+        $result = $this->reviews->forProduct((int) $website, (int) $id);
+
+        return response()->json([
+            'data' => [
+                'summary' => $result['summary'],
+                'reviews' => ProductReviewResource::collection($result['reviews'])->resolve(),
+            ],
+        ]);
+    }
+
+    /**
+     * The curated rows: "Best Seller", "New Arrivals" -- a heading and the
+     * products under it.
+     *
+     * Its own endpoint rather than a key on /catalog: a storefront that shows
+     * no highlights should not pay for them on every catalogue read, and the
+     * products come back whole here rather than as ids into the catalogue.
+     */
+    public function highlights($website)
+    {
+        return ProductHighlightResource::collection($this->data->highlights((int) $website));
     }
 
     /**
